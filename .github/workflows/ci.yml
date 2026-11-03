@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint + bundle check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 build.py --check
+      - run: shellcheck -s bash src/xc.sh setup-vscode-xcode.sh test/ci-test.sh
+
+  ios-app:
+    name: iOS app on Simulator (setup, build, run, LLDB, CodeLLDB)
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - run: /bin/bash test/ci-test.sh ios
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: logs-ios
+          path: ${{ runner.temp }}/vscode-setup-logs
+          if-no-files-found: ignore
+
+  mac-app:
+    name: Mac app (setup, build, run, LLDB)
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - run: /bin/bash test/ci-test.sh macos
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: logs-macos
+          path: ${{ runner.temp }}/vscode-setup-logs
+          if-no-files-found: ignore

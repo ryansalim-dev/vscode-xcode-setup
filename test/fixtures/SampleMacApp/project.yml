@@ -1,0 +1,18 @@
+# Minimal Mac app used by the CI test for setup-vscode-xcode.sh.
+name: SampleMacApp
+options:
+  bundleIdPrefix: dev.vscodexcode
+  deploymentTarget:
+    macOS: "14.0"
+targets:
+  SampleMacApp:
+    type: application
+    platform: macOS
+    sources: [Sources]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.vscodexcode.SampleMacApp
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_VERSION: "5.0"
+        CODE_SIGN_STYLE: Automatic
+    scheme: {}
