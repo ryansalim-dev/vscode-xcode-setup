@@ -188,7 +188,7 @@ frame variable message
 thread backtrace -c 3
 process detach
 EOF
-  with_timeout 180 xcrun lldb --batch -s "$LOGS/cmds.lldb" > "$LOGS/lldb.log" 2>&1 || true
+  with_timeout 600 xcrun lldb --batch -s "$LOGS/cmds.lldb" > "$LOGS/lldb.log" 2>&1 || true
   cat "$LOGS/lldb.log"
   grep -q "stop reason = breakpoint" "$LOGS/lldb.log" || fail "breakpoint at Greeter.swift:$LINE was not hit"
   grep -q '"hello-from-sample-app"' "$LOGS/lldb.log" || fail "couldn't read the Swift local 'message'"

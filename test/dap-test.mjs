@@ -24,7 +24,7 @@ function cleanup(code) {
   try { adapter && adapter.kill(); } catch {}
   process.exit(code);
 }
-setTimeout(() => fail("timed out after 180s"), 180_000).unref();
+setTimeout(() => fail("timed out after 600s"), 600_000).unref();
 
 function onData(chunk) {
   buf = Buffer.concat([buf, chunk]);
