@@ -2,8 +2,9 @@
 
 [![CI](https://github.com/ryansalim-dev/vscode-xcode-setup/actions/workflows/ci.yml/badge.svg)](https://github.com/ryansalim-dev/vscode-xcode-setup/actions/workflows/ci.yml)
 
-`setup-vscode-xcode.sh` turns any `.xcodeproj` / `.xcworkspace` folder into a VS Code project
-that can **build, run on the Simulator, test and debug with breakpoints** without opening Xcode.
+`setup-vscode-xcode.sh` turns any `.xcodeproj` / `.xcworkspace` folder, or a **Bazel**
+(rules_apple) workspace, into a VS Code project that can **build, run on the Simulator, test and
+debug with breakpoints** without opening Xcode.
 Xcode still has to be *installed* (it provides the compiler, SDKs and simulators); it just never
 has to be launched.
 
@@ -14,19 +15,21 @@ has to be launched.
 3. [Step 2: Set up your project](#step-2-set-up-your-project)
 4. [Step 3: First launch in VS Code](#step-3-first-launch-in-vs-code)
 5. [Everyday use](#everyday-use): [build](#build), [run](#run-without-the-debugger), [debug](#debug), [test](#test), [clean](#clean), [switch scheme or simulator](#switch-scheme-or-simulator), [code completion](#code-completion)
-6. [Optional: Xcode-style shortcuts](#optional-xcode-style-keyboard-shortcuts)
-7. [Using it from the terminal](#using-it-from-the-terminal)
-8. [Adding files, and what still needs Xcode](#adding-files-and-what-still-needs-xcode)
-9. [Troubleshooting](#troubleshooting)
-10. [What the setup changes in your project](#what-the-setup-changes-in-your-project)
-11. [How it works](#how-it-works) and [developing the script](#developing-the-script)
+6. [Bazel projects](#bazel-projects)
+7. [Optional: Xcode-style shortcuts](#optional-xcode-style-keyboard-shortcuts)
+8. [Using it from the terminal](#using-it-from-the-terminal)
+9. [Adding files, and what still needs Xcode](#adding-files-and-what-still-needs-xcode)
+10. [Troubleshooting](#troubleshooting)
+11. [What the setup changes in your project](#what-the-setup-changes-in-your-project)
+12. [How it works](#how-it-works) and [developing the script](#developing-the-script)
 
 ## Requirements
 
 - A Mac with **Xcode 15 or newer** installed (from the App Store or developer.apple.com).
   You don't have to open it.
 - An app project: a folder with a `.xcodeproj` or `.xcworkspace`, or an XcodeGen (`project.yml`),
-  Tuist or CocoaPods project.
+  Tuist or CocoaPods project, or a Bazel workspace with rules_apple apps (see
+  [Bazel projects](#bazel-projects)).
 - Everything else (Homebrew, VS Code, the command-line tools and the VS Code extensions) is
   installed for you if it's missing. The script asks before installing Homebrew or VS Code.
 
@@ -171,6 +174,79 @@ Completion, jump to definition, find references and inline errors come from the 
 - After switching scheme, or if it stops working entirely: run the task
   **Xcode: Refresh Code Completion**, then build, then restart the LSP server.
 
+## Bazel projects
+
+Bazel workspaces (a folder with `MODULE.bazel` or `WORKSPACE`) are supported in two ways. Run the
+setup from the **workspace root**, the same way as for any other project (Step 2).
+
+### Route 1: Bazel directly (the default, recommended)
+
+No Xcode project is needed. When the setup finds `MODULE.bazel` / `WORKSPACE`, it:
+
+1. Installs Bazel (bazelisk, via Homebrew) if it isn't installed.
+2. Finds your apps with `bazel query` (every `ios_application`, `macos_application`,
+   `tvos_application`, `watchos_application` and `visionos_application`) and asks which one to use
+   if there are several. To skip the question, pass the label:
+
+   ```bash
+   bash ~/vscode-xcode-setup/setup-vscode-xcode.sh --target //App:App
+   ```
+3. Sets up code completion (see below) and does a first `bazel build`.
+
+After that, everything in [Everyday use](#everyday-use) works the same way:
+
+| You do | What runs |
+|---|---|
+| **Shift+Cmd+B** (Xcode: Build) | `bazel build -c dbg --ios_multi_cpus=sim_arm64 //App:App` (the CPU flag matches the platform and your Mac) |
+| **Xcode: Run** | Build, unpack the `.ipa`, install it on the simulator with `simctl`, launch, stream `print()` output |
+| **F5** | Build, launch paused, attach Xcode's LLDB with breakpoints in your sources |
+| **Xcode: Test** | `bazel test` on every `*_unit_test` / `*_ui_test` target, or on `XC_BAZEL_TEST_TARGETS` |
+| **Xcode: Select Bazel Target** | Pick another app target (replaces *Select Scheme*) |
+| **Xcode: Clean** | `bazel clean` |
+
+Compiler errors show in the Problems panel, and so do Bazel's own errors in `BUILD` files.
+
+Settings in `.vscode/xcode/config.env`:
+
+| Setting | Meaning |
+|---|---|
+| `XC_BAZEL_TARGET` | The app target, e.g. `//App:App` |
+| `XC_BAZEL_ARGS` | Extra flags for build and test, e.g. `"--config=sim"` |
+| `XC_BAZEL_TEST_TARGETS` | Test targets for *Xcode: Test*, e.g. `"//App:AppTests //Core:CoreTests"` |
+| `XC_CONFIGURATION` | `Debug` (`-c dbg`, the default) or `Release` (`-c opt`) |
+
+Your `.bazelrc` is used as usual; the setup never edits `MODULE.bazel`, `WORKSPACE` or BUILD files.
+
+**Code completion** comes from [sourcekit-bazel-bsp](https://github.com/spotify/sourcekit-bazel-bsp),
+Spotify's build server that lets SourceKit-LSP (the Swift extension's language server) understand
+Bazel targets. The setup downloads a pinned release and writes `.bsp/` and `.sourcekit-lsp/`
+(both added to `.gitignore`), the same files its `setup_sourcekit_bsp` rule would write, so you
+don't need to add it to `MODULE.bazel`. The first time you open a Swift file, indexing builds the
+app's libraries in the background (progress shows in the status bar), so completion can take a
+few minutes to appear on a large app. If your project already sets up sourcekit-bazel-bsp itself,
+the setup leaves your `.bsp/skbsp.json` alone. Run **Xcode: Refresh Code Completion** after
+switching targets if completion seems to be for the wrong app.
+
+### Route 2: an Xcode project generated by rules_xcodeproj
+
+If you already use [rules_xcodeproj](https://github.com/MobileNativeFoundation/rules_xcodeproj),
+generate the project first and add `--xcodeproj`:
+
+```bash
+bazel run //:xcodeproj          # or whatever your xcodeproj target is called
+bash ~/vscode-xcode-setup/setup-vscode-xcode.sh --xcodeproj
+```
+
+The generated project is then treated like any other Xcode project: builds go through
+`xcodebuild` (which calls Bazel for you), and you pick schemes instead of targets. F5 loads the
+project's lldbinit, so breakpoints resolve in Bazel-built code. Re-run `bazel run //:xcodeproj`
+when you add targets or change BUILD files. Code completion goes through `xcode-build-server`,
+which only sees what Xcode-style builds record, so for Bazel projects it's weaker than route 1.
+
+**Which one?** Route 1 is faster (no project generation), has better code completion and works
+with any rules_apple app. Route 2 is useful if your team already relies on the generated project
+and its schemes.
+
 ## Optional: Xcode-style keyboard shortcuts
 
 To get **Cmd+R** (run), **Cmd+U** (test), **Cmd+.** (stop) and **Shift+Cmd+K** (clean) like in Xcode,
@@ -212,6 +288,8 @@ Setup script options (`setup-vscode-xcode.sh --help`):
 |---|---|
 | `[project-folder]` | Folder to set up (default: the current folder). |
 | `-s, --scheme NAME` | Scheme to build. |
+| `-t, --target LABEL` | Bazel app target, e.g. `//App:App`. |
+| `--xcodeproj` | In a Bazel workspace, use the rules_xcodeproj-generated project instead of calling Bazel. |
 | `-d, --simulator NAME` | Simulator to run on, e.g. `"iPhone 17 Pro"`. |
 | `-c, --configuration NAME` | Build configuration (default `Debug`). |
 | `-y, --yes` | Never ask; accept every default. |
@@ -251,6 +329,9 @@ works alongside this setup.
 | Debugger asks for your password | `sudo DevToolsSecurity -enable` |
 | F5 says the pre-launch task failed | Open the **Xcode: Prepare Debug** terminal for the build error, fix it, press F5 again. |
 | Variables show as raw memory or `<unavailable>` | Make sure `lldb.library` in `.vscode/settings.json` points at Xcode's LLDB (re-run the setup to fix it after moving or renaming Xcode). |
+| Bazel: "No ios_application/... targets found" | Run the setup from the workspace root (where `MODULE.bazel` is), or pass `--target //path:App`. |
+| Bazel: build uses the wrong flags | Put them in `XC_BAZEL_ARGS` in `.vscode/xcode/config.env`, e.g. `"--config=debug"`. |
+| Bazel: no completion | Open the Output panel's **SourceKit Language Server** channel. Run **Xcode: Refresh Code Completion**, then **Swift: Restart LSP Server**. Builds with whole-module optimization don't index; use `Debug`. |
 | Anything else odd | Re-run the setup. It's safe and fixes most configuration drift. |
 
 ## What the setup changes in your project
@@ -265,6 +346,7 @@ works alongside this setup.
 | `.vscode/xcode/config.env` | Your scheme and simulator | No (added to `.gitignore`) |
 | `.vscode/xcode/.state/` | Cached paths, debugger hand-off files | No (added to `.gitignore`) |
 | `buildServer.json` | Tells SourceKit-LSP about the Xcode project | No (added to `.gitignore`) |
+| `.bsp/`, `.sourcekit-lsp/` | Bazel only: sourcekit-bazel-bsp config and binary | No (added to `.gitignore`) |
 
 **Safe to re-run:** re-running keeps your scheme and simulator choices and anything you added
 yourself. Only tasks and launch configs named `Xcode: …` and a handful of settings keys are
@@ -276,6 +358,11 @@ rewritten. The first time it changes a file you already had, it saves the origin
 - **Builds** call `xcodebuild` with your workspace/project, scheme, configuration and the selected
   simulator, piped through `xcbeautify`. A VS Code problem matcher turns its errors and warnings
   into Problems entries.
+- **Bazel builds** call `bazel build` with `-c dbg` and the simulator CPU flag for the target's
+  platform, then find the `.ipa`/`.zip` with `bazel cquery --output=files` and unpack it into
+  `.vscode/xcode/.state/app`. From there, install, launch and debugging are the same as for Xcode
+  builds. Bazel writes debug paths relative to the workspace (`-debug-prefix-map`), so the LLDB
+  hand-off adds `target.source-map` entries that map them back to your folder and external repos.
 - **Code completion**: `xcode-build-server` writes `buildServer.json`, which lets SourceKit-LSP
   (used by the Swift extension) read the compiler flags from your last build.
 - **Debugging**: F5 runs the *Xcode: Prepare Debug* task, which builds, installs and starts the
@@ -297,3 +384,7 @@ runs `test/ci-test.sh`, which does a real setup with the stock `/bin/bash` 3.2 a
   local through Xcode's LLDB, and does the same through the CodeLLDB adapter over the Debug
   Adapter Protocol (`test/dap-test.mjs`), which is what VS Code does on F5.
 - **macOS** (`test/fixtures/SampleMacApp`): the same setup, run, and a breakpoint in `main`.
+- **Bazel** (`test/fixtures/BazelApp`, a rules_apple iOS app): everything the iOS job checks, plus
+  `bazel test`, and a check that sourcekit-bazel-bsp returns compiler arguments for a source file
+  (`test/bsp-test.mjs`, the requests SourceKit-LSP makes).
+- **Bazel through rules_xcodeproj**: the same app via the generated project and `--xcodeproj`.
