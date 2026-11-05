@@ -170,6 +170,7 @@ if [ "$PLATFORM" = ios ]; then
   prep_pid=$!
   wait_for "XC_DEBUG_READY" "$LOGS/prepare-lldb.log" 300 || fail "debug-prepare never got ready"
   cat "$STATE/target.lldb" "$STATE/process.lldb" "$STATE/settings.env"
+  [ ! -f "$STATE/bazel.lldbinit" ] || cat "$STATE/bazel.lldbinit"
   cat > "$LOGS/cmds.lldb" <<EOF
 command source "$PWD/$STATE/target.lldb"
 breakpoint set --file Greeter.swift --line $LINE

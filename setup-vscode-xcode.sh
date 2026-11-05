@@ -604,7 +604,12 @@ cmd_debug_prepare() {
         mkdir -p "$(dirname "$LLDB_INIT")"
         eval "$LLDB_INIT_CMD" >&2 || warn "Couldn't write the rules_xcodeproj lldbinit; breakpoints may not resolve."
       fi
-      [ ! -f "$LLDB_INIT" ] || printf 'command source -s 1 -e 0 "%s"\n' "$LLDB_INIT"
+      # Skip its swift_debug_settings.py import: that stop hook kept the app from ever reaching
+      # a breakpoint when attaching from outside Xcode. The paths and source maps are what matter.
+      if [ -f "$LLDB_INIT" ]; then
+        grep -v '^command script import' "$LLDB_INIT" > "$STATE/bazel.lldbinit" || true
+        printf 'command source -s 1 -e 0 "%s"\n' "$STATE/bazel.lldbinit"
+      fi
     fi
   } > "$STATE/target.lldb"
   if ! is_sim; then
