@@ -5,6 +5,7 @@ import json, os, re, shutil, time
 
 VS = ".vscode"
 LLDB_LIB = os.environ.get("LLDB_LIB", "")
+BAZEL = os.environ.get("BUILD_SYSTEM") == "bazel"
 MARK = "// Managed by setup-vscode-xcode.sh"
 XC = "${workspaceFolder}/.vscode/xcode/xc.sh"
 STATE = "${workspaceFolder}/.vscode/xcode/.state"
@@ -86,11 +87,27 @@ WARN = {
         "file": 1, "line": 2, "column": 3, "message": 4,
     },
 }
-DEBUG_MATCHER = dict(ERR, background={
+# Bazel prints compiler diagnostics with workspace-relative paths ("App/Foo.swift:3:5: error: ..."),
+# and its own errors (BUILD files, missing deps) as "ERROR: /abs/path/BUILD:3:14: ...".
+def rel(severity):
+    return {
+        "owner": "bazel", "source": "bazel", "fileLocation": ["relative", "${workspaceFolder}"],
+        "severity": severity,
+        "pattern": {
+            "regexp": r"^(?:\./)?([A-Za-z0-9_@+-][^\s:]*\.[A-Za-z0-9]+):(\d+)(?::(\d+))?:\s+%s:\s+(.*)$" % severity,
+            "file": 1, "line": 2, "column": 3, "message": 4,
+        },
+    }
+BAZEL_ERR = {
+    "owner": "bazel", "source": "bazel", "fileLocation": "absolute", "severity": "error",
+    "pattern": {"regexp": r"^ERROR: (/[^:]+):(\d+):(\d+): (.*)$", "file": 1, "line": 2, "column": 3, "message": 4},
+}
+MATCHERS = [ERR, WARN] + ([rel("error"), rel("warning"), BAZEL_ERR] if BAZEL else [])
+DEBUG_MATCHERS = [dict(m, background={
     "activeBegin": True,
     "beginsPattern": "XC_DEBUG_PREPARE_BEGIN",
     "endsPattern": "XC_DEBUG_READY",
-})
+}) for m in MATCHERS]
 
 
 def task(label, args, detail, matchers=None, group=None, reveal="always", focus=False, background=False):
@@ -113,18 +130,21 @@ def task(label, args, detail, matchers=None, group=None, reveal="always", focus=
 
 
 OUR_TASKS = [
-    task("Xcode: Build", ["build"], "Build the selected scheme (Shift+Cmd+B)", [ERR, WARN],
+    task("Xcode: Build", ["build"], "Build the selected scheme (Shift+Cmd+B)", MATCHERS,
          group={"kind": "build", "isDefault": True}),
-    task("Xcode: Run", ["run"], "Build, launch on the simulator and show app output (no debugger)", [ERR, WARN]),
+    task("Xcode: Run", ["run"], "Build, launch on the simulator and show app output (no debugger)", MATCHERS),
     task("Xcode: Prepare Debug", ["debug-prepare"], "Used by F5: build, launch paused, show app output",
-         [DEBUG_MATCHER], background=True),
+         DEBUG_MATCHERS, background=True),
     task("Xcode: Stop App", ["stop"], "Terminate the running app", reveal="silent"),
-    task("Xcode: Test", ["test"], "Run the scheme's tests", [ERR, WARN],
+    task("Xcode: Test", ["test"], "Run the scheme's tests", MATCHERS,
          group={"kind": "test", "isDefault": True}),
     task("Xcode: Clean", ["clean"], "Clean build products"),
+    task("Xcode: Select Bazel Target", ["select-scheme", "--prompt"], "Choose which Bazel app target to build",
+         focus=True) if BAZEL else
     task("Xcode: Select Scheme", ["select-scheme", "--prompt"], "Choose which scheme to build", focus=True),
     task("Xcode: Select Simulator", ["select-sim", "--prompt"], "Choose which simulator to run on", focus=True),
-    task("Xcode: Refresh Code Completion", ["refresh-index"], "Regenerate buildServer.json for SourceKit-LSP"),
+    task("Xcode: Refresh Code Completion", ["refresh-index"],
+         "Set up sourcekit-bazel-bsp for SourceKit-LSP" if BAZEL else "Regenerate buildServer.json for SourceKit-LSP"),
     task("Xcode: Open Simulator", ["open-sim"], "Boot the selected simulator", reveal="silent"),
     task("Xcode: Show Info", ["info"], "Print the scheme, simulator and app paths in use"),
 ]
@@ -163,10 +183,20 @@ if LLDB_LIB:
     settings["lldb.library"] = LLDB_LIB
 settings["lldb.launch.expressions"] = "native"
 settings["swift.autoGenerateLaunchConfigurations"] = False
+if BAZEL:
+    # No Package.swift here: keep the Swift extension's SwiftPM features from getting in the way
+    # of the Bazel build server (as sourcekit-bazel-bsp recommends).
+    settings["swift.disableSwiftPackageManagerIntegration"] = True
+    settings["swift.searchSubfoldersForPackages"] = False
 for key, extra in (
     ("search.exclude", {"**/DerivedData": True, "**/Pods": True, "**/.vscode/xcode/.state": True}),
     ("files.watcherExclude", {"**/DerivedData/**": True, "**/Pods/**": True, "**/.vscode/xcode/.state/**": True}),
-):
+) + ((
+    # Bazel's convenience symlinks point into huge output trees.
+    ("search.exclude", {"bazel-*": True}),
+    ("files.watcherExclude", {"**/bazel-*/**": True}),
+    ("files.exclude", {"bazel-*": True}),
+) if BAZEL else ()):
     cur = settings.get(key) if isinstance(settings.get(key), dict) else {}
     for k, v in extra.items():
         cur.setdefault(k, v)

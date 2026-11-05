@@ -4,6 +4,8 @@
 #
 #   /bin/bash test/ci-test.sh ios     # sample iOS app (XcodeGen), Simulator, LLDB + CodeLLDB
 #   /bin/bash test/ci-test.sh macos   # sample Mac app (XcodeGen), run, LLDB
+#   /bin/bash test/ci-test.sh bazel   # rules_apple iOS app built with Bazel directly (+ tests, code completion)
+#   /bin/bash test/ci-test.sh bazel-xcodeproj   # same app through a rules_xcodeproj-generated project
 set -eo pipefail
 
 MODE="${1:-ios}"
@@ -45,31 +47,61 @@ echo "bash: $BASH_VERSION"
 xcodebuild -version
 rm -rf "$WORK"
 
-if [ "$MODE" = ios ]; then FIXTURE=SampleApp; else FIXTURE=SampleMacApp; fi
+case "$MODE" in
+  ios) FIXTURE=SampleApp; SRC=Sources/Greeter.swift ;;
+  macos) FIXTURE=SampleMacApp; SRC=Sources/Greeter.swift ;;
+  bazel|bazel-xcodeproj) FIXTURE=BazelApp; SRC=App/Sources/Greeter.swift ;;
+  *) echo "unknown mode $MODE"; exit 2 ;;
+esac
+PLATFORM=ios; [ "$MODE" != macos ] || PLATFORM=macos
+SETUP_ARGS=(--yes --no-open)
 cp -R "$TOOL/test/fixtures/$FIXTURE" "$WORK"
 cd "$WORK"
 git init -q .
+case "$MODE" in bazel*) bazel --version ;; esac
+
+if [ "$MODE" = bazel-xcodeproj ]; then
+  step "Generate the Xcode project with rules_xcodeproj"
+  bazel run //:xcodeproj 2>&1 | tee "$LOGS/xcodeproj.log" | tail -n 40 || fail "bazel run //:xcodeproj failed"
+  assert "BazelApp.xcodeproj not generated" test -d BazelApp.xcodeproj
+  xcodebuild -list -project BazelApp.xcodeproj | tee "$LOGS/schemes.txt"
+  end_step
+  SETUP_ARGS+=(--xcodeproj)
+fi
 
 # ─────────────────────────────────────────────────────────────────────────────
 step "Setup, first run (installs tools, VS Code, extensions; builds)"
-/bin/bash "$SETUP" --yes --no-open 2>&1 | tee "$LOGS/setup-$MODE.log"
+/bin/bash "$SETUP" "${SETUP_ARGS[@]}" 2>&1 | tee "$LOGS/setup-$MODE.log"
 for f in .vscode/tasks.json .vscode/launch.json .vscode/settings.json .vscode/extensions.json; do
   assert "$f missing or not valid JSON" json_ok "$f"
 done
 assert "helper missing" test -x .vscode/xcode/xc.sh
-assert "buildServer.json missing" test -f buildServer.json
-assert ".gitignore not updated" grep -qxF "buildServer.json" .gitignore
+assert ".gitignore not updated" grep -qxF ".vscode/xcode/config.env" .gitignore
 # shellcheck source=/dev/null
 . .vscode/xcode/config.env
-echo "scheme=$XC_SCHEME platform=$XC_PLATFORM sim=$XC_SIM_NAME ($XC_SIM_UDID)"
-assert "XcodeGen project not generated" test -d "$FIXTURE.xcodeproj"
-assert "wrong scheme '$XC_SCHEME'" test "$XC_SCHEME" = "$FIXTURE"
-if [ "$MODE" = ios ]; then
-  assert "wrong platform '$XC_PLATFORM'" test "$XC_PLATFORM" = ios
-  assert "no simulator picked" test -n "$XC_SIM_UDID"
-else
-  assert "wrong platform '$XC_PLATFORM'" test "$XC_PLATFORM" = macos
-fi
+echo "build system=$XC_BUILD_SYSTEM scheme=$XC_SCHEME target=$XC_BAZEL_TARGET platform=$XC_PLATFORM sim=$XC_SIM_NAME ($XC_SIM_UDID)"
+case "$MODE" in
+  bazel)
+    assert "build system is '$XC_BUILD_SYSTEM', not bazel" test "$XC_BUILD_SYSTEM" = bazel
+    assert "wrong Bazel target '$XC_BAZEL_TARGET'" test "$XC_BAZEL_TARGET" = //App:App
+    assert "no 'Xcode: Select Bazel Target' task" grep -q '"Xcode: Select Bazel Target"' .vscode/tasks.json
+    assert ".bsp/skbsp.json (code completion) missing; see .vscode/xcode/.state/skbsp-setup.log" test -f .bsp/skbsp.json
+    assert ".sourcekit-lsp/config.json missing" test -f .sourcekit-lsp/config.json
+    assert "sourcekit-bazel-bsp binary missing" test -x .bsp/sourcekit-bazel-bsp
+    cat .bsp/skbsp.json .sourcekit-lsp/config.json
+    ;;
+  bazel-xcodeproj)
+    assert "build system is '$XC_BUILD_SYSTEM', not xcode" test "$XC_BUILD_SYSTEM" = xcode
+    assert "no scheme picked" test -n "$XC_SCHEME"
+    ;;
+  *)
+    assert "buildServer.json missing" test -f buildServer.json
+    assert "XcodeGen project not generated" test -d "$FIXTURE.xcodeproj"
+    assert "wrong scheme '$XC_SCHEME'" test "$XC_SCHEME" = "$FIXTURE"
+    ;;
+esac
+assert "wrong platform '$XC_PLATFORM'" test "$XC_PLATFORM" = "$PLATFORM"
+[ "$PLATFORM" != ios ] || assert "no simulator picked" test -n "$XC_SIM_UDID"
 LLDB_LIB="$(node -e 'console.log(JSON.parse(require("fs").readFileSync(".vscode/settings.json","utf8").replace(/^\/\/.*\n/,""))["lldb.library"]||"")')"
 assert "lldb.library not set to an existing file ($LLDB_LIB)" test -f "$LLDB_LIB"
 code --list-extensions | tee "$LOGS/extensions.txt"
@@ -80,14 +112,14 @@ end_step
 # ─────────────────────────────────────────────────────────────────────────────
 step "Setup, second run changes nothing"
 before="$(cat .vscode/*.json .vscode/xcode/config.env .gitignore | shasum)"
-/bin/bash "$SETUP" --yes --no-open --no-build > "$LOGS/setup-rerun-$MODE.log" 2>&1 || { cat "$LOGS/setup-rerun-$MODE.log"; fail "re-run failed"; }
+/bin/bash "$SETUP" "${SETUP_ARGS[@]}" --no-build > "$LOGS/setup-rerun-$MODE.log" 2>&1 || { cat "$LOGS/setup-rerun-$MODE.log"; fail "re-run failed"; }
 after="$(cat .vscode/*.json .vscode/xcode/config.env .gitignore | shasum)"
 assert "re-running changed the generated files" test "$before" = "$after"
 end_step
 
 # ─────────────────────────────────────────────────────────────────────────────
 step "Build errors are picked up by the Problems panel matcher"
-src="Sources/Greeter.swift"
+src="$SRC"
 cp "$src" "$LOGS/original.swift"
 printf '\nlet ciBrokenValue: Int = "not an int"\n' >> "$src"
 if XC build > "$LOGS/broken-build.log" 2>&1; then cp "$LOGS/original.swift" "$src"; fail "build with a type error succeeded"; fi
@@ -95,17 +127,19 @@ cp "$LOGS/original.swift" "$src"
 node -e '
 const fs = require("fs");
 const tasks = JSON.parse(fs.readFileSync(".vscode/tasks.json","utf8").replace(/^\/\/.*\n/,""));
-const err = new RegExp(tasks.tasks.find(t => t.label === "Xcode: Build").problemMatcher[0].pattern.regexp);
-const hits = fs.readFileSync(process.argv[1],"utf8").split("\n").map(l => l.match(err)).filter(Boolean);
+const errs = tasks.tasks.find(t => t.label === "Xcode: Build").problemMatcher
+  .filter(m => m.severity === "error").map(m => new RegExp(m.pattern.regexp));
+const lines = fs.readFileSync(process.argv[1],"utf8").split("\n");
+const hits = lines.flatMap(l => errs.map(re => l.match(re)).filter(Boolean));
 hits.forEach(m => console.log("matched:", m[1] + ":" + m[2] + ":" + m[3], "-", m[4]));
-if (!hits.some(m => m[1].endsWith(process.argv[2]))) { console.log(fs.readFileSync(process.argv[1],"utf8")); process.exit(1); }
+if (!hits.some(m => m[1].endsWith(process.argv[2]))) { console.log(lines.join("\n")); process.exit(1); }
 ' "$LOGS/broken-build.log" "$src" || fail "the error matcher didn't find the error in $src"
 XC build > "$LOGS/rebuild.log" 2>&1 || { cat "$LOGS/rebuild.log"; fail "rebuild after fixing failed"; }
 end_step
 
 STATE=.vscode/xcode/.state
 
-if [ "$MODE" = ios ]; then
+if [ "$PLATFORM" = ios ]; then
   # ───────────────────────────────────────────────────────────────────────────
   step "Xcode: Run launches on the Simulator and streams output"
   XC run > "$LOGS/run.log" 2>&1 &
@@ -116,7 +150,7 @@ if [ "$MODE" = ios ]; then
   wait_exit "$run_pid" 20 || fail "run task didn't end after Stop App"
   end_step
 
-  LINE="$(grep -n CI_BREAKPOINT Sources/Greeter.swift | cut -d: -f1)"
+  LINE="$(grep -n CI_BREAKPOINT "$SRC" | cut -d: -f1)"
 
   # ───────────────────────────────────────────────────────────────────────────
   step "F5 hand-off works with Xcode's LLDB (attach, breakpoint, variables)"
@@ -165,7 +199,7 @@ EOF
   prep_pid=$!
   wait_for "XC_DEBUG_READY" "$LOGS/prepare-dap.log" 300 || fail "debug-prepare never got ready"
   node "$HERE/dap-test.mjs" --adapter "$ADAPTER" --liblldb "$LLDB_LIB" --workspace "$PWD" \
-    --file "$PWD/Sources/Greeter.swift" --line "$LINE" --var "message=hello-from-sample-app" \
+    --file "$PWD/$SRC" --line "$LINE" --var "message=hello-from-sample-app" \
     --console "$STATE/console.log" --expect "hello-from-sample-app" 2>&1 | tee "$LOGS/dap.log" \
     || fail "CodeLLDB session failed (see log above)"
   XC stop
@@ -197,6 +231,22 @@ EOF
   with_timeout 120 xcrun lldb --batch -s "$LOGS/cmds.lldb" > "$LOGS/lldb-mac.log" 2>&1 || true
   cat "$LOGS/lldb-mac.log"
   grep -q "stop reason = breakpoint" "$LOGS/lldb-mac.log" || fail "didn't stop in main"
+  end_step
+fi
+
+if [ "$MODE" = bazel ] || [ "$MODE" = bazel-xcodeproj ]; then
+  # ───────────────────────────────────────────────────────────────────────────
+  step "Xcode: Test runs the unit tests"
+  XC test > "$LOGS/test.log" 2>&1 || { tail -n 80 "$LOGS/test.log"; fail "tests failed"; }
+  tail -n 15 "$LOGS/test.log"
+  end_step
+fi
+
+if [ "$MODE" = bazel ]; then
+  # ───────────────────────────────────────────────────────────────────────────
+  step "Code completion: sourcekit-bazel-bsp answers SourceKit-LSP's requests"
+  node "$HERE/bsp-test.mjs" --workspace "$PWD" --file "$PWD/$SRC" 2>&1 | tee "$LOGS/bsp.log" \
+    || fail "the Bazel build server didn't return compiler arguments for $SRC"
   end_step
 fi
 

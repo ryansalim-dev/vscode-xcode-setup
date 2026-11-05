@@ -1,0 +1,12 @@
+load("@rules_xcodeproj//xcodeproj:defs.bzl", "top_level_target", "xcodeproj")
+
+# `bazel run //:xcodeproj` generates BazelApp.xcodeproj (the "generated project" route).
+xcodeproj(
+    name = "xcodeproj",
+    project_name = "BazelApp",
+    tags = ["manual"],
+    top_level_targets = [
+        top_level_target("//App:App", target_environments = ["simulator"]),
+        "//App:AppTests",
+    ],
+)
