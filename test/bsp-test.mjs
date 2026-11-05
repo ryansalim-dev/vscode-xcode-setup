@@ -11,12 +11,15 @@ const args = {};
 for (let i = 2; i < process.argv.length; i += 2) args[process.argv[i].replace(/^--/, "")] = process.argv[i + 1];
 const log = (...a) => console.log("[bsp]", ...a);
 let server;
-const fail = (msg) => { console.error("[bsp] FAIL:", msg); try { server && server.kill(); } catch {} process.exit(1); };
+// The server runs in its own process group: on shutdown it signals its whole group, which would
+// otherwise include this script and the CI shell around it.
+const stop = () => { try { process.kill(-server.pid, "SIGTERM"); } catch {} };
+const fail = (msg) => { console.error("[bsp] FAIL:", msg); stop(); process.exit(1); };
 setTimeout(() => fail("timed out after 18 minutes"), 18 * 60_000).unref();
 
 const cfg = JSON.parse(fs.readFileSync(`${args.workspace}/.bsp/skbsp.json`, "utf8"));
 log("argv:", JSON.stringify(cfg.argv));
-server = spawn(cfg.argv[0], cfg.argv.slice(1), { cwd: args.workspace, stdio: ["pipe", "pipe", "inherit"] });
+server = spawn(cfg.argv[0], cfg.argv.slice(1), { cwd: args.workspace, stdio: ["pipe", "pipe", "inherit"], detached: true });
 server.on("exit", (c, s) => log("server exited", c, s));
 
 let seq = 1, buf = Buffer.alloc(0);
@@ -67,9 +70,15 @@ async function main() {
   log("initialized:", JSON.stringify(init).slice(0, 600));
   write({ method: "build/initialized", params: {} });
 
-  const { targets } = await request("workspace/buildTargets", {});
-  log(`${targets.length} build targets:`, targets.map((t) => t.displayName || t.id.uri).join(", "));
-  if (!targets.length) fail("no build targets");
+  // The server loads the Bazel graph in the background and announces it with buildTarget/didChange,
+  // after which SourceKit-LSP asks again. Do the same: ask until targets show up.
+  let targets = [];
+  for (let i = 0; i < 40 && !targets.length; i++) {
+    if (i) await new Promise((r) => setTimeout(r, 15_000));
+    ({ targets } = await request("workspace/buildTargets", {}));
+    log(`${targets.length} build targets:`, targets.map((t) => t.displayName || t.id.uri).join(", "));
+  }
+  if (!targets.length) fail("no build targets after 10 minutes");
 
   const { items } = await request("buildTarget/sources", { targets: targets.map((t) => t.id) });
   const owner = items.find((it) => it.sources.some((s) => s.uri === fileUri || decodeURIComponent(s.uri).endsWith(args.file)));
@@ -98,6 +107,6 @@ async function main() {
   await request("build/shutdown", null, 30_000).catch(() => {});
   write({ method: "build/exit" });
   log("PASS");
-  setTimeout(() => process.exit(0), 500);
+  setTimeout(() => { stop(); process.exit(0); }, 2000);
 }
 main().catch((e) => fail(e.stack || e.message));
