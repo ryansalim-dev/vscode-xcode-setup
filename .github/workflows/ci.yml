@@ -53,10 +53,11 @@ jobs:
   bazel:
     name: Bazel app, built with Bazel directly (build, run, test, LLDB, CodeLLDB, code completion)
     runs-on: macos-latest
-    timeout-minutes: 60
+    timeout-minutes: 55
     steps:
       - uses: actions/checkout@v4
       - run: /bin/bash test/ci-test.sh bazel
+        timeout-minutes: 50
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -67,10 +68,11 @@ jobs:
   bazel-xcodeproj:
     name: Bazel app through a rules_xcodeproj project (build, run, test, LLDB, CodeLLDB)
     runs-on: macos-latest
-    timeout-minutes: 60
+    timeout-minutes: 55
     steps:
       - uses: actions/checkout@v4
       - run: /bin/bash test/ci-test.sh bazel-xcodeproj
+        timeout-minutes: 50
       - uses: actions/upload-artifact@v4
         if: always()
         with:

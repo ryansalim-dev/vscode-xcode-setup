@@ -60,6 +60,18 @@ cd "$WORK"
 git init -q .
 case "$MODE" in bazel*) bazel --version ;; esac
 
+# Leave nothing running: background Bazel servers (including the build server's own output base),
+# sourcekit-bazel-bsp and booted simulators can keep the runner from finishing the job.
+cleanup() {
+  set +e
+  pkill -f sourcekit-bazel-bsp 2>/dev/null
+  case "$MODE" in bazel*) (cd "$WORK" 2>/dev/null && with_timeout 60 bazel shutdown) >/dev/null 2>&1 ;; esac
+  pkill -f 'bazel\(' 2>/dev/null; pkill -f 'A-server.jar' 2>/dev/null
+  with_timeout 60 xcrun simctl shutdown all >/dev/null 2>&1
+  return 0
+}
+trap cleanup EXIT
+
 if [ "$MODE" = bazel-xcodeproj ]; then
   step "Generate the Xcode project with rules_xcodeproj"
   bazel run //:xcodeproj 2>&1 | tee "$LOGS/xcodeproj.log" | tail -n 40 || fail "bazel run //:xcodeproj failed"
@@ -237,7 +249,8 @@ fi
 if [ "$MODE" = bazel ] || [ "$MODE" = bazel-xcodeproj ]; then
   # ───────────────────────────────────────────────────────────────────────────
   step "Xcode: Test runs the unit tests"
-  XC test > "$LOGS/test.log" 2>&1 || { tail -n 80 "$LOGS/test.log"; fail "tests failed"; }
+  with_timeout 1500 /bin/bash .vscode/xcode/xc.sh test > "$LOGS/test.log" 2>&1 \
+    || { tail -n 80 "$LOGS/test.log"; fail "tests failed or took over 25 minutes"; }
   tail -n 15 "$LOGS/test.log"
   end_step
 fi
@@ -245,7 +258,7 @@ fi
 if [ "$MODE" = bazel ]; then
   # ───────────────────────────────────────────────────────────────────────────
   step "Code completion: sourcekit-bazel-bsp answers SourceKit-LSP's requests"
-  node "$HERE/bsp-test.mjs" --workspace "$PWD" --file "$PWD/$SRC" 2>&1 | tee "$LOGS/bsp.log" \
+  with_timeout 1200 node "$HERE/bsp-test.mjs" --workspace "$PWD" --file "$PWD/$SRC" 2>&1 | tee "$LOGS/bsp.log" \
     || fail "the Bazel build server didn't return compiler arguments for $SRC"
   end_step
 fi

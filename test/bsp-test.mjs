@@ -12,7 +12,7 @@ for (let i = 2; i < process.argv.length; i += 2) args[process.argv[i].replace(/^
 const log = (...a) => console.log("[bsp]", ...a);
 let server;
 const fail = (msg) => { console.error("[bsp] FAIL:", msg); try { server && server.kill(); } catch {} process.exit(1); };
-setTimeout(() => fail("timed out after 25 minutes"), 25 * 60_000).unref();
+setTimeout(() => fail("timed out after 18 minutes"), 18 * 60_000).unref();
 
 const cfg = JSON.parse(fs.readFileSync(`${args.workspace}/.bsp/skbsp.json`, "utf8"));
 log("argv:", JSON.stringify(cfg.argv));
@@ -25,7 +25,7 @@ function write(obj) {
   const body = JSON.stringify({ jsonrpc: "2.0", ...obj });
   server.stdin.write(`Content-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`);
 }
-function request(method, params, ms = 20 * 60_000) {
+function request(method, params, ms = 15 * 60_000) {
   const id = seq++;
   write({ id, method, params });
   return new Promise((resolve, reject) => {
