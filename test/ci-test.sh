@@ -58,7 +58,15 @@ SETUP_ARGS=(--yes --no-open)
 cp -R "$TOOL/test/fixtures/$FIXTURE" "$WORK"
 cd "$WORK"
 git init -q .
-case "$MODE" in bazel*) bazel --version ;; esac
+case "$MODE" in
+  bazel*)
+    bazel --version
+    # Hosted macOS runners have 7 GB of RAM. Two Bazel servers (ours and the build server's own
+    # output base) plus simulators ran the runner out of memory and took the job down with it.
+    printf 'startup --host_jvm_args=-Xmx1g\nbuild --jobs=4\n' >> "$HOME/.bazelrc"
+    ;;
+esac
+mem() { echo "memory: $(vm_stat | awk '/Pages free/ {f=$3} /Pages inactive/ {i=$3} END {printf "%d MB free+inactive", (f+i)*16384/1048576}')"; }
 
 # Leave nothing running: background Bazel servers (including the build server's own output base),
 # sourcekit-bazel-bsp and booted simulators can keep the runner from finishing the job.
@@ -250,6 +258,8 @@ fi
 if [ "$MODE" = bazel ] || [ "$MODE" = bazel-xcodeproj ]; then
   # ───────────────────────────────────────────────────────────────────────────
   step "Xcode: Test runs the unit tests"
+  xcrun simctl shutdown all >/dev/null 2>&1 || true   # the test runner boots its own simulator
+  mem
   with_timeout 1500 /bin/bash .vscode/xcode/xc.sh test > "$LOGS/test.log" 2>&1 \
     || { tail -n 80 "$LOGS/test.log"; fail "tests failed or took over 25 minutes"; }
   tail -n 15 "$LOGS/test.log"
@@ -259,6 +269,10 @@ fi
 if [ "$MODE" = bazel ]; then
   # ───────────────────────────────────────────────────────────────────────────
   step "Code completion: sourcekit-bazel-bsp answers SourceKit-LSP's requests"
+  # The build server runs its own Bazel server; stop ours and the simulators to leave it the memory.
+  bazel shutdown >/dev/null 2>&1 || true
+  xcrun simctl shutdown all >/dev/null 2>&1 || true
+  mem
   with_timeout 1200 node "$HERE/bsp-test.mjs" --workspace "$PWD" --file "$PWD/$SRC" 2>&1 | tee "$LOGS/bsp.log" \
     || fail "the Bazel build server didn't return compiler arguments for $SRC"
   end_step
