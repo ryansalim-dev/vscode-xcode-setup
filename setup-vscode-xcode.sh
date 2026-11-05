@@ -280,8 +280,8 @@ cd "$ROOT"
 
 XC_BUILD_SYSTEM="xcode"; XC_WORKSPACE=""; XC_PROJECT=""; XC_SCHEME=""; XC_CONFIGURATION="Debug"
 XC_PLATFORM=""; XC_SIM_UDID=""; XC_SIM_NAME=""; XC_TARGET=""; XC_EXTRA_BUILD_ARGS=""
-XC_BAZEL_TARGET=""; XC_BAZEL_TEST_TARGETS=""; XC_BAZEL_ARGS=""
-XC_VARS="XC_BUILD_SYSTEM XC_WORKSPACE XC_PROJECT XC_SCHEME XC_CONFIGURATION XC_PLATFORM XC_SIM_UDID XC_SIM_NAME XC_TARGET XC_EXTRA_BUILD_ARGS XC_BAZEL_TARGET XC_BAZEL_TEST_TARGETS XC_BAZEL_ARGS"
+XC_BAZEL_TARGET=""; XC_BAZEL_TEST_TARGETS=""; XC_BAZEL_ARGS=""; XC_TEST_SCHEME=""
+XC_VARS="XC_BUILD_SYSTEM XC_WORKSPACE XC_PROJECT XC_SCHEME XC_CONFIGURATION XC_PLATFORM XC_SIM_UDID XC_SIM_NAME XC_TARGET XC_EXTRA_BUILD_ARGS XC_BAZEL_TARGET XC_BAZEL_TEST_TARGETS XC_BAZEL_ARGS XC_TEST_SCHEME"
 # shellcheck source=/dev/null
 if [ -f "$CONFIG" ]; then . "$CONFIG"; fi
 
@@ -328,6 +328,7 @@ save_config() {
     echo "# Bazel Target') and 'Xcode: Select Simulator' tasks, or edit by hand."
     echo "# XC_TARGET: app target to launch when a scheme builds several apps (optional)."
     echo "# XC_EXTRA_BUILD_ARGS: extra xcodebuild arguments, e.g. \"-quiet\" (optional)."
+    echo "# XC_TEST_SCHEME: scheme for 'Xcode: Test' when tests live in their own scheme (optional)."
     echo "# XC_BAZEL_TEST_TARGETS: Bazel test targets for 'Xcode: Test' (default: every *_unit_test/*_ui_test)."
     echo "# XC_BAZEL_ARGS: extra Bazel flags for build/test, e.g. \"--config=sim\" (optional)."
     for v in $XC_VARS; do
@@ -667,13 +668,26 @@ cmd_stop() {
 cmd_test() {
   if is_bazel; then bazel_test; return 0; fi
   build_args
-  info "Testing ${B}$XC_SCHEME${N} on $(dest_label)..."
-  # shellcheck disable=SC2086
-  if xcodebuild "${BARGS[@]}" -skipMacroValidation -skipPackagePluginValidation $XC_EXTRA_BUILD_ARGS test 2>&1 | pretty; then
-    ok "Tests passed."
-  else
-    die "Tests failed (or the scheme has no test action)."
-  fi
+  local scheme="${XC_TEST_SCHEME:-$XC_SCHEME}" log="$STATE/test.log" i
+  for i in 1 2; do
+    info "Testing ${B}$scheme${N} on $(dest_label)..."
+    BARGS=("${CARGS[@]}" -scheme "$scheme" "${BARGS[@]:${#CARGS[@]}+2}")
+    # shellcheck disable=SC2086
+    if xcodebuild "${BARGS[@]}" -skipMacroValidation -skipPackagePluginValidation $XC_EXTRA_BUILD_ARGS test 2>&1 \
+        | tee "$log" | pretty; then
+      ok "Tests passed."
+      return 0
+    fi
+    # Projects often keep tests in their own scheme (rules_xcodeproj makes "App" and "AppTests").
+    if [ "$i" = 1 ] && [ -z "${XC_TEST_SCHEME:-}" ] && grep -q "not currently configured for the test action" "$log" \
+        && xcodebuild "${CARGS[@]}" -list 2>/dev/null | grep -qx "[[:space:]]*${XC_SCHEME}Tests"; then
+      warn "Scheme '$XC_SCHEME' has no tests; using '${XC_SCHEME}Tests' (set XC_TEST_SCHEME in .vscode/xcode/config.env to choose)."
+      scheme="${XC_SCHEME}Tests"
+      continue
+    fi
+    break
+  done
+  die "Tests failed (or the scheme has no test action; set XC_TEST_SCHEME in .vscode/xcode/config.env)."
 }
 
 cmd_clean() {
@@ -1096,7 +1110,7 @@ write_config() {
   local cfg=.vscode/xcode/config.env prev v
   XC_BUILD_SYSTEM="xcode"; XC_WORKSPACE=""; XC_PROJECT=""; XC_SCHEME=""; XC_CONFIGURATION="Debug"; XC_PLATFORM=""
   XC_SIM_UDID=""; XC_SIM_NAME=""; XC_TARGET=""; XC_EXTRA_BUILD_ARGS=""
-  XC_BAZEL_TARGET=""; XC_BAZEL_TEST_TARGETS=""; XC_BAZEL_ARGS=""
+  XC_BAZEL_TARGET=""; XC_BAZEL_TEST_TARGETS=""; XC_BAZEL_ARGS=""; XC_TEST_SCHEME=""
   # shellcheck source=/dev/null
   if [ -f "$cfg" ]; then . "$cfg"; fi
   prev="$XC_BUILD_SYSTEM:${XC_WORKSPACE:-$XC_PROJECT}"
@@ -1110,7 +1124,7 @@ write_config() {
   [ -z "$CONFIGURATION" ] || XC_CONFIGURATION="$CONFIGURATION"
   {
     echo "# Written by setup-vscode-xcode.sh"
-    for v in XC_BUILD_SYSTEM XC_WORKSPACE XC_PROJECT XC_SCHEME XC_CONFIGURATION XC_PLATFORM XC_SIM_UDID XC_SIM_NAME XC_TARGET XC_EXTRA_BUILD_ARGS XC_BAZEL_TARGET XC_BAZEL_TEST_TARGETS XC_BAZEL_ARGS; do
+    for v in XC_BUILD_SYSTEM XC_WORKSPACE XC_PROJECT XC_SCHEME XC_CONFIGURATION XC_PLATFORM XC_SIM_UDID XC_SIM_NAME XC_TARGET XC_EXTRA_BUILD_ARGS XC_BAZEL_TARGET XC_BAZEL_TEST_TARGETS XC_BAZEL_ARGS XC_TEST_SCHEME; do
       printf '%s=%q\n' "$v" "${!v}"
     done
   } > "$cfg"
