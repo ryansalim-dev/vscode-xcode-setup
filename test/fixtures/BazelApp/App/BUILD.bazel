@@ -1,0 +1,34 @@
+load("@build_bazel_rules_apple//apple:ios.bzl", "ios_application", "ios_unit_test")
+load("@build_bazel_rules_swift//swift:swift_library.bzl", "swift_library")
+
+swift_library(
+    name = "AppLib",
+    srcs = glob(["Sources/*.swift"]),
+    module_name = "BazelApp",
+    visibility = ["//visibility:public"],
+)
+
+ios_application(
+    name = "App",
+    bundle_id = "dev.vscodexcode.BazelApp",
+    families = ["iphone"],
+    infoplists = ["Info.plist"],
+    minimum_os_version = "17.0",
+    visibility = ["//visibility:public"],
+    deps = [":AppLib"],
+)
+
+swift_library(
+    name = "AppTestsLib",
+    testonly = True,
+    srcs = glob(["Tests/*.swift"]),
+    module_name = "BazelAppTests",
+    deps = [":AppLib"],
+)
+
+ios_unit_test(
+    name = "AppTests",
+    minimum_os_version = "17.0",
+    visibility = ["//visibility:public"],
+    deps = [":AppTestsLib"],
+)

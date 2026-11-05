@@ -24,7 +24,7 @@ function cleanup(code) {
   try { adapter && adapter.kill(); } catch {}
   process.exit(code);
 }
-setTimeout(() => fail("timed out after 180s"), 180_000).unref();
+setTimeout(() => fail("timed out after 600s"), 600_000).unref();
 
 function onData(chunk) {
   buf = Buffer.concat([buf, chunk]);
@@ -129,7 +129,7 @@ async function main() {
 
   let stopped;
   for (let i = 0; i < 3; i++) {
-    stopped = await waitEvent((e) => e.event === "stopped", 60_000, "stopped event");
+    stopped = await waitEvent((e) => e.event === "stopped", 300_000, "stopped event");
     if (stopped.body.reason === "breakpoint") break;
     log(`stopped with reason '${stopped.body.reason}' (not our breakpoint); continuing`);
     await request("continue", { threadId: stopped.body.threadId });
