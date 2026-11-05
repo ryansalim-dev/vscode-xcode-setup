@@ -680,8 +680,10 @@ bazel_test() {
     [ -n "${targets// /}" ] || die "No *_unit_test or *_ui_test targets found. Set XC_BAZEL_TEST_TARGETS in .vscode/xcode/config.env."
   fi
   info "Testing ${B}$targets${N}with Bazel..."
+  info "The first run creates and boots a BAZEL_TEST simulator, which can take a few minutes; later runs reuse it."
+  # The longer timeout covers that first boot; XC_BAZEL_ARGS (in BFLAGS, later on the line) can override it.
   # shellcheck disable=SC2086  # targets is a space-separated label list
-  if bazel_cmd test "${BFLAGS[@]}" --test_output=errors $targets 2>&1; then
+  if bazel_cmd test --test_timeout=900 --test_output=errors "${BFLAGS[@]}" $targets 2>&1; then
     ok "Tests passed."
   else
     die "Tests failed."
