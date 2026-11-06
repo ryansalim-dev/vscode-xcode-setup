@@ -232,6 +232,19 @@ EOF
   XC stop
   wait_exit "$prep_pid" 20 || fail "debug task didn't end after Stop App"
   end_step
+
+  # ───────────────────────────────────────────────────────────────────────────
+  step "A failed F5 prepare leaves nothing for 'Debug Anyway' to launch"
+  cp .vscode/xcode/config.env "$WORK.config.env"
+  sed -i '' 's/^XC_PLATFORM=.*/XC_PLATFORM=macos/' .vscode/xcode/config.env
+  if XC debug-prepare > "$LOGS/prepare-wrong-platform.log" 2>&1; then
+    cat "$LOGS/prepare-wrong-platform.log"; fail "debug-prepare succeeded for an iOS app with XC_PLATFORM=macos"
+  fi
+  cp "$WORK.config.env" .vscode/xcode/config.env
+  cat "$LOGS/prepare-wrong-platform.log" | tail -n 5; cat "$STATE/process.lldb"
+  assert "process.lldb still launches something after a failed prepare" grep -q "did not finish" "$STATE/process.lldb"
+  assert "target.lldb not cleared after a failed prepare" test ! -s "$STATE/target.lldb"
+  end_step
 else
   # ───────────────────────────────────────────────────────────────────────────
   step "Xcode: Run launches the Mac app"

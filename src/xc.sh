@@ -102,6 +102,14 @@ download_name() {
   esac
 }
 is_sim() { [ -n "$(sim_family)" ]; }
+# A simulator build can't run as a Mac process: launched that way it stops with SIGSTOP and dies.
+# This happens when XC_PLATFORM says macOS but the scheme's app is an iOS/tvOS/watchOS/visionOS one.
+check_host_app() {
+  case "$EXEC_PATH" in
+    *simulator/*|*-iphoneos/*|*-appletvos/*|*-watchos/*|*-xros/*)
+      die "$PRODUCT_NAME is built for a simulator or device ($EXEC_PATH), but XC_PLATFORM is '$XC_PLATFORM', so it would be started as a Mac process and crash. Run the task 'Xcode: Select Scheme' to detect the platform again, or set XC_PLATFORM (e.g. ios) in .vscode/xcode/config.env." ;;
+  esac
+}
 is_bazel() { [ "$XC_BUILD_SYSTEM" = bazel ]; }
 dest_label() { if is_sim; then echo "$XC_SIM_NAME"; else echo "macOS"; fi; }
 re_escape() { printf '%s' "$1" | sed 's/[][\.*^$+?(){}|]/\\&/g'; }
@@ -319,6 +327,7 @@ cmd_run() {
   cmd_build
   load_settings
   if ! is_sim; then
+    check_host_app
     pkill -f -- "$(re_escape "$EXEC_PATH")" 2>/dev/null || true
     info "Running $PRODUCT_NAME (stop with Ctrl+C or the 'Xcode: Stop App' task)."
     exec "$EXEC_PATH"
@@ -338,6 +347,11 @@ stop_bg() { if [ -n "$BG_PIDS" ]; then kill $BG_PIDS 2>/dev/null || true; BG_PID
 
 cmd_debug_prepare() {
   echo "XC_DEBUG_PREPARE_BEGIN"
+  # Until this run gets the app ready, F5 (including "Debug Anyway" after a failed prepare) must not
+  # reuse the commands of an earlier run, which could launch a stale or wrong binary.
+  printf '%s\n' 'script print("error: Xcode: Prepare Debug did not finish, so there is nothing to debug. See its terminal, fix the error and press F5 again.")' \
+    > "$STATE/process.lldb"
+  : > "$STATE/target.lldb"
   cmd_build
   load_settings
   local line="" pid="" i launcher
@@ -360,6 +374,7 @@ cmd_debug_prepare() {
     fi
   } > "$STATE/target.lldb"
   if ! is_sim; then
+    check_host_app
     # LLDB launches the app itself; its output shows in VS Code's Debug Console.
     pkill -f -- "$(re_escape "$EXEC_PATH")" 2>/dev/null || true
     printf 'process launch\n' > "$STATE/process.lldb"
