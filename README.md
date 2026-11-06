@@ -41,10 +41,10 @@ git clone https://github.com/ryansalim-dev/vscode-xcode-setup ~/vscode-xcode-set
 
 (Or download the repo as a zip from GitHub and unzip it to `~/vscode-xcode-setup`.)
 
-**Optional, recommended:** install it as a command so you can run it in any project with one word:
+**Optional, recommended:** install it as a command so you can run it in any project with one word. It's a link, so a `git pull` in `~/vscode-xcode-setup` keeps the command up to date:
 
 ```bash
-install -m 755 ~/vscode-xcode-setup/setup-vscode-xcode.sh "$(brew --prefix 2>/dev/null || echo /usr/local)/bin/xcode-vscode"
+ln -sf ~/vscode-xcode-setup/setup-vscode-xcode.sh "$(brew --prefix 2>/dev/null || echo /usr/local)/bin/xcode-vscode"
 ```
 
 ## Step 2: Set up your project
@@ -237,6 +237,10 @@ bazel run //:xcodeproj          # or whatever your xcodeproj target is called
 bash ~/vscode-xcode-setup/setup-vscode-xcode.sh --xcodeproj
 ```
 
+With `--xcodeproj` the generated project wins even if the folder also has a standalone
+`.xcworkspace` (it's recognized by the `rules_xcodeproj/` folder inside it). To pick a specific one,
+pass `--project path/To/App.xcodeproj` instead.
+
 The generated project is then treated like any other Xcode project: builds go through
 `xcodebuild` (which calls Bazel for you), and you pick schemes instead of targets. F5 loads the
 project's lldbinit, so breakpoints resolve in Bazel-built code. Re-run `bazel run //:xcodeproj`
@@ -290,6 +294,8 @@ Setup script options (`setup-vscode-xcode.sh --help`):
 | `-s, --scheme NAME` | Scheme to build. |
 | `-t, --target LABEL` | Bazel app target, e.g. `//App:App`. |
 | `--xcodeproj` | In a Bazel workspace, use the rules_xcodeproj-generated project instead of calling Bazel. |
+| `-p, --project PATH` | Use this `.xcodeproj`, e.g. when the folder also has a `.xcworkspace`. |
+| `-w, --workspace PATH` | Use this `.xcworkspace`. |
 | `-d, --simulator NAME` | Simulator to run on, e.g. `"iPhone 17 Pro"`. |
 | `-c, --configuration NAME` | Build configuration (default `Debug`). |
 | `-y, --yes` | Never ask; accept every default. |
@@ -323,6 +329,8 @@ works alongside this setup.
 | No completion, or stale errors in the editor | Build once, then **Swift: Restart LSP Server**. Still broken: run **Xcode: Refresh Code Completion**, build, restart again. |
 | Build fails with signing errors for a Mac app | Pick a team once in Xcode (Signing & Capabilities), or sign to run locally by adding `XC_EXTRA_BUILD_ARGS="CODE_SIGN_IDENTITY=-"` to `.vscode/xcode/config.env`. |
 | Wrong app launches (scheme builds several apps, e.g. app + watch app) | Set `XC_TARGET=YourAppTarget` in `.vscode/xcode/config.env`. |
+| It uses the wrong `.xcworkspace` / `.xcodeproj` | Re-run with `--project path/App.xcodeproj` or `--workspace path/App.xcworkspace`. The choice is saved for later runs. |
+| `Unknown option` for a flag in this README | Your installed `xcode-vscode` is an older copy. `git pull` the repo and link it instead of copying: `ln -sf ~/vscode-xcode-setup/setup-vscode-xcode.sh "$(brew --prefix)/bin/xcode-vscode"`. |
 | Need extra `xcodebuild` flags | Set `XC_EXTRA_BUILD_ARGS="..."` in `.vscode/xcode/config.env`. |
 | "No iOS simulators are installed" | Let the script download the runtime, or run `xcodebuild -downloadPlatform iOS`. |
 | The simulator you used is gone after an Xcode update | Nothing to do: the next build picks the same model on the new OS, or the newest iPhone. |
@@ -348,7 +356,7 @@ works alongside this setup.
 | `buildServer.json` | Tells SourceKit-LSP about the Xcode project | No (added to `.gitignore`) |
 | `.bsp/`, `.sourcekit-lsp/` | Bazel only: sourcekit-bazel-bsp config and binary | No (added to `.gitignore`) |
 
-**Safe to re-run:** re-running keeps your scheme and simulator choices and anything you added
+**Safe to re-run:** re-running keeps your project/workspace, scheme and simulator choices and anything you added
 yourself. Only tasks and launch configs named `Xcode: …` and a handful of settings keys are
 rewritten. The first time it changes a file you already had, it saves the original as
 `*.before-xcode-setup`. Teammates who pull your committed `.vscode` files just run the setup once.
