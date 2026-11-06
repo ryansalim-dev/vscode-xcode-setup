@@ -355,6 +355,7 @@ cmd_debug_prepare() {
   load_settings
   local line="" pid="" i launcher
   rm -f "$STATE/app.pid"
+  is_sim || check_host_app
   {
     printf 'target create "%s"\n' "$EXEC_PATH"
     if is_bazel; then
@@ -373,7 +374,6 @@ cmd_debug_prepare() {
     fi
   } > "$STATE/target.lldb"
   if ! is_sim; then
-    check_host_app
     # LLDB launches the app itself; its output shows in VS Code's Debug Console.
     pkill -f -- "$(re_escape "$EXEC_PATH")" 2>/dev/null || true
     printf 'process launch\n' > "$STATE/process.lldb"
