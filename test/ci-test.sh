@@ -85,6 +85,10 @@ if [ "$MODE" = bazel-xcodeproj ]; then
   bazel run //:xcodeproj 2>&1 | tee "$LOGS/xcodeproj.log" | tail -n 40 || fail "bazel run //:xcodeproj failed"
   assert "BazelApp.xcodeproj not generated" test -d BazelApp.xcodeproj
   xcodebuild -list -project BazelApp.xcodeproj | tee "$LOGS/schemes.txt"
+  # A standalone workspace next to the generated project: --xcodeproj must still pick the project.
+  mkdir -p Legacy.xcworkspace
+  printf '<?xml version="1.0" encoding="UTF-8"?>\n<Workspace version="1.0">\n  <FileRef location="group:BazelApp.xcodeproj"></FileRef>\n</Workspace>\n' \
+    > Legacy.xcworkspace/contents.xcworkspacedata
   end_step
   SETUP_ARGS+=(--xcodeproj)
 fi
@@ -112,6 +116,8 @@ case "$MODE" in
     ;;
   bazel-xcodeproj)
     assert "build system is '$XC_BUILD_SYSTEM', not xcode" test "$XC_BUILD_SYSTEM" = xcode
+    assert "picked '${XC_WORKSPACE:-$XC_PROJECT}', not the rules_xcodeproj project" \
+      test "$XC_PROJECT" = BazelApp.xcodeproj -a -z "$XC_WORKSPACE"
     assert "no scheme picked" test -n "$XC_SCHEME"
     ;;
   *)
