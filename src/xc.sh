@@ -104,11 +104,10 @@ download_name() {
 is_sim() { [ -n "$(sim_family)" ]; }
 # A simulator build can't run as a Mac process: launched that way it stops with SIGSTOP and dies.
 # This happens when XC_PLATFORM says macOS but the scheme's app is an iOS/tvOS/watchOS/visionOS one.
+# Mac apps (and Mac Catalyst) have Contents/Info.plist; iOS-family bundles keep Info.plist at the top.
 check_host_app() {
-  case "$EXEC_PATH" in
-    *simulator/*|*-iphoneos/*|*-appletvos/*|*-watchos/*|*-xros/*)
-      die "$PRODUCT_NAME is built for a simulator or device ($EXEC_PATH), but XC_PLATFORM is '$XC_PLATFORM', so it would be started as a Mac process and crash. Run the task 'Xcode: Select Scheme' to detect the platform again, or set XC_PLATFORM (e.g. ios) in .vscode/xcode/config.env." ;;
-  esac
+  [ -d "$APP_PATH" ] && [ ! -f "$APP_PATH/Contents/Info.plist" ] || return 0
+  die "$PRODUCT_NAME is an iOS/tvOS/watchOS/visionOS app ($APP_PATH), but XC_PLATFORM is '$XC_PLATFORM', so it would be started as a Mac process and crash. Run the task '$(is_bazel && echo "Xcode: Select Bazel Target" || echo "Xcode: Select Scheme")' to detect the platform again, or set XC_PLATFORM (e.g. ios) in .vscode/xcode/config.env."
 }
 is_bazel() { [ "$XC_BUILD_SYSTEM" = bazel ]; }
 dest_label() { if is_sim; then echo "$XC_SIM_NAME"; else echo "macOS"; fi; }
