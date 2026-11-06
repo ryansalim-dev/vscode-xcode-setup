@@ -8,7 +8,7 @@
 # and simulator choices, and keeps your own VS Code settings, tasks and launch configs.
 set -eo pipefail
 
-VERSION="1.2.0"
+VERSION="1.2.1"
 
 usage() {
   cat <<'EOF'
